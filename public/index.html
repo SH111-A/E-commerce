@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Simple E-commerce UI</title>
+</head>
+<body>
+  <h2 id="authTitle">Login</h2>
+  <input type="text" id="username" placeholder="Username" />
+  <input type="password" id="password" placeholder="Password" />
+  <select id="role" style="display: none">
+    <option value="customer">Customer</option>
+    <option value="admin">Admin</option>
+  </select>
+  <button id="authButton">Login</button>
+  <p><a href="#" onclick="toggleAuth()">Don't have an account? Register</a></p>
+  <h3 id="loginInfo" style="color: green;"></h3>
+
+  <h2>Search Products</h2>
+  <input type="text" id="searchInput" placeholder="Search..." />
+  <select id="categoryInput">
+    <option value="">All</option>
+    <option value="Mobile">Mobile</option>
+    <option value="Laptop">Laptop</option>
+    <option value="Fashion">Fashion</option>
+  </select>
+  <button onclick="fetchProducts()">Search</button>
+  <ul id="searchResults"></ul>
+
+  <h2>Products</h2>
+  <ul id="productList"></ul>
+
+  <h2>Your Cart</h2>
+  <ul id="cartList"></ul>
+  <button onclick="placeOrder()">Place Order</button>
+
+  <h2>Your Orders</h2>
+  <button onclick="fetchOrders()">Load Orders</button>
+  <ul id="orderList"></ul>
+
+  <div id="adminPanel" style="display:none">
+    <h2>Admin Panel</h2>
+    <input id="productName" placeholder="Name" />
+    <input id="productCategory" placeholder="Category" />
+    <input id="productPrice" type="number" placeholder="Price" />
+    <input id="productDesc" placeholder="Description" />
+    <button onclick="addProduct()">Add</button>
+  </div>
+
+  <script>
+    const BASE_URL = "http://localhost:5000";
+    let token = "", isLogin = true, cart = [], userRole = "";
+
+    document.getElementById("authButton").addEventListener("click", handleAuth);
+
+    function toggleAuth() {
+      isLogin = !isLogin;
+      document.getElementById("authTitle").innerText = isLogin ? "Login" : "Register";
+      document.getElementById("role").style.display = isLogin ? "none" : "block";
+      document.getElementById("authButton").innerText = isLogin ? "Login" : "Register";
+    }
+
+    async function handleAuth() {
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      const role = document.getElementById("role").value;
+      const url = isLogin 
+        ? `${BASE_URL}/api/auth/login` 
+        : `${BASE_URL}/api/auth/register`;
+      const body = isLogin ? { username, password } : { username, password, role };
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        alert(`❌ Error ${res.status}: ${errText}`);
+        return;
+      }
+
+      const data = await res.json();
+      if (isLogin && data.token) {
+        token = data.token;
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        userRole = payload.role;
+        const loggedInUser = payload.username || username;
+
+        document.getElementById("adminPanel").style.display = userRole === "admin" ? "block" : "none";
+        document.getElementById("loginInfo").innerText = `✅ Logged in as ${userRole.toUpperCase()} (${loggedInUser})`;
+
+        alert(`✅ Logged in as ${userRole}`);
+      } else if (!isLogin) {
+        alert("✅ Registered! Please login.");
+        toggleAuth();
+      }
+    }
+
+    async function fetchProducts() {
+      const search = document.getElementById("searchInput").value;
+      const category = document.getElementById("categoryInput").value;
+      let url = `${BASE_URL}/api/products?`;
+      if (search) url += `search=${search}&`;
+      if (category) url += `category=${category}`;
+
+      const res = await fetch(url);
+      const products = await res.json();
+      const list = document.getElementById("searchResults");
+      list.innerHTML = "";
+
+      if (products.length === 0) {
+        list.innerHTML = "<li>No products found</li>";
+        return;
+      }
+
+      products.forEach(p => {
+        const li = document.createElement("li");
+        li.innerHTML = `${p.name} - ₹${p.price} <button onclick='addToCart("${p._id}", "${p.name}")'>Add to Cart</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    function addToCart(productId, name) {
+      const existing = cart.find(c => c.productId === productId);
+      if (existing) existing.quantity++;
+      else cart.push({ productId, name, quantity: 1 });
+      renderCart();
+    }
+
+    function renderCart() {
+      const list = document.getElementById("cartList");
+      list.innerHTML = "";
+      cart.forEach((item, index) => {
+        const li = document.createElement("li");
+        li.innerHTML = `${item.name} x ${item.quantity} 
+          <button onclick="increase(${index})">+</button>
+          <button onclick="decrease(${index})">-</button>
+          <button onclick="removeItem(${index})">Remove</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    function increase(index) {
+      cart[index].quantity++;
+      renderCart();
+    }
+
+    function decrease(index) {
+      if (cart[index].quantity > 1) cart[index].quantity--;
+      else removeItem(index);
+      renderCart();
+    }
+
+    function removeItem(index) {
+      cart.splice(index, 1);
+      renderCart();
+    }
+
+    async function placeOrder() {
+      if (!token) return alert("Login first");
+      for (const item of cart) {
+        await fetch(`${BASE_URL}/api/cart`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ productId: item.productId, quantity: item.quantity })
+        });
+      }
+      await fetch(`${BASE_URL}/api/orders`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      alert("Order placed");
+      cart = [];
+      renderCart();
+    }
+
+    async function fetchOrders() {
+      const res = await fetch(`${BASE_URL}/api/orders`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const orders = await res.json();
+      const list = document.getElementById("orderList");
+      list.innerHTML = "";
+      orders.forEach(o => {
+        const li = document.createElement("li");
+        li.innerHTML = `${o._id} - ${new Date(o.createdAt).toLocaleString()}`;
+        list.appendChild(li);
+      });
+    }
+
+    async function addProduct() {
+      const name = document.getElementById("productName").value;
+      const category = document.getElementById("productCategory").value;
+      const price = document.getElementById("productPrice").value;
+      const description = document.getElementById("productDesc").value;
+      await fetch(`${BASE_URL}/api/products`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ name, category, price, description })
+      });
+      alert("Product added");
+    }
+  </script>
+</body>
+</html>
